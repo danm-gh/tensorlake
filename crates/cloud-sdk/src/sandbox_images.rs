@@ -1053,10 +1053,8 @@ fn completion_snapshot_uri(
         return Ok(snapshot_uri);
     }
 
-    if prepared.snapshot_rel_path.is_none() {
-        if let Some(snapshot_uri) = prepared.snapshot_uri.clone() {
-            return Ok(snapshot_uri);
-        }
+    if let Some(snapshot_uri) = prepared.snapshot_uri.clone() {
+        return Ok(snapshot_uri);
     }
 
     Err(SandboxImageBuildError::other(
@@ -2084,11 +2082,10 @@ mod tests {
     }
 
     #[test]
-    fn complete_request_uses_signed_uri_on_rel_path_flow() {
+    fn complete_request_uses_signed_uri_when_provided() {
         let mut prepared = prepared_build("base");
         prepared.parent = None;
         prepared.snapshot_uri = None;
-        prepared.snapshot_rel_path = Some("snapshots/final.tlsnap".to_string());
         let metadata = json!({
             "snapshot_uri": "s3://bucket/from-signed.tlsnap",
             "snapshot_format_version": "durable_archive_v1",
@@ -2110,7 +2107,6 @@ mod tests {
         let mut prepared = prepared_build("base");
         prepared.parent = None;
         prepared.snapshot_uri = Some("s3://bucket/stale-prepared.tlsnap".to_string());
-        prepared.snapshot_rel_path = Some("snapshots/final.tlsnap".to_string());
         let metadata = json!({
             "snapshot_format_version": "durable_archive_v1",
             "snapshot_size_bytes": 1234,
@@ -2127,11 +2123,10 @@ mod tests {
     }
 
     #[test]
-    fn complete_request_rejects_metadata_uri_mismatch_on_rel_path_flow() {
+    fn complete_request_rejects_metadata_uri_mismatch_when_signed_uri_provided() {
         let mut prepared = prepared_build("base");
         prepared.parent = None;
         prepared.snapshot_uri = None;
-        prepared.snapshot_rel_path = Some("snapshots/final.tlsnap".to_string());
         let metadata = json!({
             "snapshot_uri": "s3://bucket/from-metadata.tlsnap",
             "snapshot_format_version": "durable_archive_v1",
