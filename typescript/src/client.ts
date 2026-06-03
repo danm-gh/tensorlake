@@ -34,35 +34,51 @@ import { Sandbox } from "./sandbox.js";
 import { isLocalhost, lifecyclePath, resolveProxyUrl, resolveSandboxLifecycleUrl } from "./url.js";
 
 const MAX_CLOUD_INIT_USER_DATA_BYTES = 16 * 1024;
-const MAX_CLOUD_INIT_BASE64_BYTES = 32 * 1024;
 
-function isHttpUrl(source: string): boolean {
-  return source.startsWith("http://") || source.startsWith("https://");
+function cloudInitIncludeData(source: string): Buffer | undefined {
+  const isWindowsPath = /^[A-Za-z]:[\\/]/.test(source);
+  try {
+    const url = new URL(source);
+    if (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      url.hostname.length > 0
+    ) {
+      return Buffer.from(`#include\n${url.toString()}\n`, "utf8");
+    }
+    if (!isWindowsPath) {
+      throw new SandboxError(
+        "cloud-init URL must be an absolute HTTP(S) URL with a host",
+      );
+    }
+  } catch (error) {
+    if (error instanceof SandboxError) throw error;
+    if (!isWindowsPath && /^[A-Za-z][A-Za-z0-9+.-]*:/.test(source)) {
+      throw new SandboxError(
+        "cloud-init URL must be an absolute HTTP(S) URL with a host",
+      );
+    }
+  }
+  return undefined;
 }
 
 async function readCloudInitBase64(
   cloudInit: string | URL | undefined,
-  cloudInitPath: string | undefined,
   snapshotId?: string,
 ): Promise<string | undefined> {
-  if (cloudInit != null && cloudInitPath != null) {
-    throw new SandboxError("cloudInit and cloudInitPath cannot both be set");
-  }
-
-  const source = cloudInit ?? cloudInitPath;
-  if (source == null) return undefined;
+  if (cloudInit == null) return undefined;
   if (snapshotId != null) {
     throw new SandboxError("cloud-init cannot be used with snapshotId");
   }
 
-  const sourceText = source instanceof URL ? source.toString() : source;
-  const data = isHttpUrl(sourceText)
-    ? Buffer.from(`#include\n${sourceText}\n`, "utf8")
-    : await readFile(sourceText).catch((error) => {
+  const sourceText = cloudInit instanceof URL ? cloudInit.toString() : cloudInit;
+  const includeData = cloudInitIncludeData(sourceText);
+  const data =
+    includeData ??
+    (await readFile(sourceText).catch((error) => {
       throw new SandboxError(
         `failed to read cloud-init file ${JSON.stringify(sourceText)}: ${error}`,
       );
-    });
+    }));
 
   if (data.length === 0) {
     throw new SandboxError("cloud-init user data must not be empty");
@@ -73,13 +89,7 @@ async function readCloudInitBase64(
     );
   }
 
-  const encoded = data.toString("base64");
-  if (encoded.length > MAX_CLOUD_INIT_BASE64_BYTES) {
-    throw new SandboxError(
-      `cloud-init user data exceeds ${MAX_CLOUD_INIT_BASE64_BYTES} byte base64 limit`,
-    );
-  }
-  return encoded;
+  return data.toString("base64");
 }
 
 /**
@@ -163,7 +173,6 @@ export class SandboxClient {
   async create(options?: CreateSandboxOptions): Promise<Traced<CreateSandboxResponse>> {
     const cloudInitBase64 = await readCloudInitBase64(
       options?.cloudInit,
-      options?.cloudInitPath,
       options?.snapshotId,
     );
     const body: Record<string, unknown> = {
@@ -643,10 +652,7 @@ export class SandboxClient {
   async createAndConnect(
     options?: CreateAndConnectOptions,
   ): Promise<Sandbox> {
-    if (
-      options?.poolId != null &&
-      (options?.cloudInit != null || options?.cloudInitPath != null)
-    ) {
+    if (options?.poolId != null && options?.cloudInit != null) {
       throw new SandboxError("cloud-init cannot be used with poolId");
     }
     const startupTimeout = options?.startupTimeout ?? 60;

@@ -182,7 +182,6 @@ class AsyncSandboxClient:
         snapshot_id: str | None = None,
         name: str | None = None,
         cloud_init: str | os.PathLike[str] | None = None,
-        cloud_init_path: str | os.PathLike[str] | None = None,
     ) -> Traced[CreateSandboxResponse]:
         network = None
         if not allow_internet_access or allow_out is not None or deny_out is not None:
@@ -193,7 +192,6 @@ class AsyncSandboxClient:
             )
         cloud_init_base64 = _read_cloud_init_config(
             cloud_init=cloud_init,
-            cloud_init_path=cloud_init_path,
             snapshot_id=snapshot_id,
         )
         request_model = CreateSandboxRequest(
@@ -679,10 +677,9 @@ class AsyncSandboxClient:
         startup_timeout: float = 60,
         name: str | None = None,
         cloud_init: str | os.PathLike[str] | None = None,
-        cloud_init_path: str | os.PathLike[str] | None = None,
     ) -> "AsyncSandbox":
         requested_name = None if pool_id is not None else name
-        if pool_id is not None and (cloud_init is not None or cloud_init_path is not None):
+        if pool_id is not None and cloud_init is not None:
             raise SandboxError("cloud-init cannot be used with `pool_id`.")
         if pool_id is not None:
             result = await self.claim(pool_id)
@@ -701,7 +698,6 @@ class AsyncSandboxClient:
                 snapshot_id=snapshot_id,
                 name=name,
                 cloud_init=cloud_init,
-                cloud_init_path=cloud_init_path,
             )
 
         if result.status == SandboxStatus.RUNNING:

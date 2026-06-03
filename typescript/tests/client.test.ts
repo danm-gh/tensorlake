@@ -137,12 +137,11 @@ describe("SandboxClient", () => {
       client.close();
     });
 
-    it("reads cloudInitPath and sends cloud_init_base64", async () => {
+    it("reads cloudInit file path and sends cloud_init_base64", async () => {
       const path = await tempFile("#cloud-config\n");
       mockFetch((_url, init) => {
         const body = JSON.parse(init?.body as string);
         expect(body.cloud_init_base64).toBe(Buffer.from("#cloud-config\n").toString("base64"));
-        expect(body.cloudInitPath).toBeUndefined();
         return new Response(
           JSON.stringify({ sandbox_id: "sbx-cloud-init", status: "pending" }),
           { status: 200 },
@@ -150,7 +149,7 @@ describe("SandboxClient", () => {
       });
 
       const client = SandboxClient.forLocalhost();
-      await client.create({ cloudInitPath: path });
+      await client.create({ cloudInit: path });
       client.close();
     });
 
@@ -171,7 +170,19 @@ describe("SandboxClient", () => {
       client.close();
     });
 
-    it("rejects cloudInitPath with snapshotId before sending a request", async () => {
+    it("rejects invalid cloudInit URLs before sending a request", async () => {
+      mockFetch(() => {
+        throw new Error("request should not be sent");
+      });
+
+      const client = SandboxClient.forLocalhost();
+      await expect(
+        client.create({ cloudInit: "ftp://example.com/cloud-init.yaml" }),
+      ).rejects.toThrow("HTTP(S) URL");
+      client.close();
+    });
+
+    it("rejects cloudInit with snapshotId before sending a request", async () => {
       const path = await tempFile("#cloud-config\n");
       mockFetch(() => {
         throw new Error("request should not be sent");
@@ -179,7 +190,7 @@ describe("SandboxClient", () => {
 
       const client = SandboxClient.forLocalhost();
       await expect(
-        client.create({ snapshotId: "snap-1", cloudInitPath: path }),
+        client.create({ snapshotId: "snap-1", cloudInit: path }),
       ).rejects.toThrow(SandboxError);
       client.close();
     });
