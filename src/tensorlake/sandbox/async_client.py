@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import warnings
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -24,6 +25,7 @@ from .client import (
     RustCloudSandboxClient,
     _normalize_user_ports,
     _parse_rust_client_error_fields,
+    _read_cloud_init_config,
     _raise_as_sandbox_error,
     _resolve_sandbox_identifier,
     _rust_status_code,
@@ -179,6 +181,8 @@ class AsyncSandboxClient:
         deny_out: list[str] | None = None,
         snapshot_id: str | None = None,
         name: str | None = None,
+        cloud_init: str | os.PathLike[str] | None = None,
+        cloud_init_path: str | os.PathLike[str] | None = None,
     ) -> Traced[CreateSandboxResponse]:
         network = None
         if not allow_internet_access or allow_out is not None or deny_out is not None:
@@ -187,6 +191,11 @@ class AsyncSandboxClient:
                 allow_out=allow_out or [],
                 deny_out=deny_out or [],
             )
+        cloud_init_base64 = _read_cloud_init_config(
+            cloud_init=cloud_init,
+            cloud_init_path=cloud_init_path,
+            snapshot_id=snapshot_id,
+        )
         request_model = CreateSandboxRequest(
             image=image,
             resources=CreateSandboxResources(
@@ -198,6 +207,7 @@ class AsyncSandboxClient:
             network=network,
             snapshot_id=snapshot_id,
             name=name,
+            cloud_init_base64=cloud_init_base64,
         )
         try:
             trace_id, response_json = await self._rust_client.create_sandbox_async(
@@ -668,8 +678,12 @@ class AsyncSandboxClient:
         proxy_url: str | None = None,
         startup_timeout: float = 60,
         name: str | None = None,
+        cloud_init: str | os.PathLike[str] | None = None,
+        cloud_init_path: str | os.PathLike[str] | None = None,
     ) -> "AsyncSandbox":
         requested_name = None if pool_id is not None else name
+        if pool_id is not None and (cloud_init is not None or cloud_init_path is not None):
+            raise SandboxError("cloud-init cannot be used with `pool_id`.")
         if pool_id is not None:
             result = await self.claim(pool_id)
         else:
@@ -686,6 +700,8 @@ class AsyncSandboxClient:
                 deny_out=deny_out,
                 snapshot_id=snapshot_id,
                 name=name,
+                cloud_init=cloud_init,
+                cloud_init_path=cloud_init_path,
             )
 
         if result.status == SandboxStatus.RUNNING:

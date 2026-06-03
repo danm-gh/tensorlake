@@ -93,6 +93,10 @@ export interface CreateSandboxOptions {
   snapshotId?: string;
   /** Optional name for the sandbox. Named sandboxes support suspend/resume. When absent the sandbox is ephemeral. */
   name?: string;
+  /** Local cloud-init user-data file path or HTTP(S) URL. Fresh boots only; not supported with snapshot restores. */
+  cloudInit?: string | URL;
+  /** @deprecated Use cloudInit instead. */
+  cloudInitPath?: string;
 }
 
 export interface UpdateSandboxOptions {

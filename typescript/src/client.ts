@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import * as defaults from "./defaults.js";
 import { SandboxError } from "./errors.js";
 import { type Traced, HttpClient } from "./http.js";
@@ -31,6 +32,55 @@ import {
 } from "./models.js";
 import { Sandbox } from "./sandbox.js";
 import { isLocalhost, lifecyclePath, resolveProxyUrl, resolveSandboxLifecycleUrl } from "./url.js";
+
+const MAX_CLOUD_INIT_USER_DATA_BYTES = 16 * 1024;
+const MAX_CLOUD_INIT_BASE64_BYTES = 32 * 1024;
+
+function isHttpUrl(source: string): boolean {
+  return source.startsWith("http://") || source.startsWith("https://");
+}
+
+async function readCloudInitBase64(
+  cloudInit: string | URL | undefined,
+  cloudInitPath: string | undefined,
+  snapshotId?: string,
+): Promise<string | undefined> {
+  if (cloudInit != null && cloudInitPath != null) {
+    throw new SandboxError("cloudInit and cloudInitPath cannot both be set");
+  }
+
+  const source = cloudInit ?? cloudInitPath;
+  if (source == null) return undefined;
+  if (snapshotId != null) {
+    throw new SandboxError("cloud-init cannot be used with snapshotId");
+  }
+
+  const sourceText = source instanceof URL ? source.toString() : source;
+  const data = isHttpUrl(sourceText)
+    ? Buffer.from(`#include\n${sourceText}\n`, "utf8")
+    : await readFile(sourceText).catch((error) => {
+      throw new SandboxError(
+        `failed to read cloud-init file ${JSON.stringify(sourceText)}: ${error}`,
+      );
+    });
+
+  if (data.length === 0) {
+    throw new SandboxError("cloud-init user data must not be empty");
+  }
+  if (data.length > MAX_CLOUD_INIT_USER_DATA_BYTES) {
+    throw new SandboxError(
+      `cloud-init user data exceeds ${MAX_CLOUD_INIT_USER_DATA_BYTES} byte limit`,
+    );
+  }
+
+  const encoded = data.toString("base64");
+  if (encoded.length > MAX_CLOUD_INIT_BASE64_BYTES) {
+    throw new SandboxError(
+      `cloud-init user data exceeds ${MAX_CLOUD_INIT_BASE64_BYTES} byte base64 limit`,
+    );
+  }
+  return encoded;
+}
 
 /**
  * Client for managing TensorLake sandboxes, pools, and snapshots.
@@ -111,6 +161,11 @@ export class SandboxClient {
 
   /** Create a new sandbox. Returns immediately; the sandbox may still be starting. Use `createAndConnect()` for a blocking, ready-to-use handle. */
   async create(options?: CreateSandboxOptions): Promise<Traced<CreateSandboxResponse>> {
+    const cloudInitBase64 = await readCloudInitBase64(
+      options?.cloudInit,
+      options?.cloudInitPath,
+      options?.snapshotId,
+    );
     const body: Record<string, unknown> = {
       resources: {
         cpus: options?.cpus ?? 1.0,
@@ -125,6 +180,7 @@ export class SandboxClient {
     if (options?.entrypoint != null) body.entrypoint = options.entrypoint;
     if (options?.snapshotId != null) body.snapshot_id = options.snapshotId;
     if (options?.name != null) body.name = options.name;
+    if (cloudInitBase64 != null) body.cloud_init_base64 = cloudInitBase64;
 
     if (
       options?.allowInternetAccess === false ||
@@ -587,6 +643,12 @@ export class SandboxClient {
   async createAndConnect(
     options?: CreateAndConnectOptions,
   ): Promise<Sandbox> {
+    if (
+      options?.poolId != null &&
+      (options?.cloudInit != null || options?.cloudInitPath != null)
+    ) {
+      throw new SandboxError("cloud-init cannot be used with poolId");
+    }
     const startupTimeout = options?.startupTimeout ?? 60;
 
     // claim() never sends options.name to the server, so only create() should fall
